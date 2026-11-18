@@ -1,68 +1,94 @@
-/*
-Copyright 2026.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
+// Severity is a Trivy vulnerability severity level.
+// +kubebuilder:validation:Enum=UNKNOWN;LOW;MEDIUM;HIGH;CRITICAL
+type Severity string
 
-// ImageScanSpec defines the desired state of ImageScan
+const (
+	SeverityUnknown  Severity = "UNKNOWN"
+	SeverityLow      Severity = "LOW"
+	SeverityMedium   Severity = "MEDIUM"
+	SeverityHigh     Severity = "HIGH"
+	SeverityCritical Severity = "CRITICAL"
+)
+
+// ScanPhase is the state of a scan. PartiallyFailed is only used for the overall phase.
+// +kubebuilder:validation:Enum=Pending;Running;Succeeded;PartiallyFailed;Failed
+type ScanPhase string
+
+const (
+	PhasePending         ScanPhase = "Pending"
+	PhaseRunning         ScanPhase = "Running"
+	PhaseSucceeded       ScanPhase = "Succeeded"
+	PhasePartiallyFailed ScanPhase = "PartiallyFailed"
+	PhaseFailed          ScanPhase = "Failed"
+)
+
+// ImageScanSpec defines which pods' images should be scanned and how.
+// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="spec is immutable"
 type ImageScanSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// foo is an example field of ImageScan. Edit imagescan_types.go to remove/update
+	// NamespaceSelector selects namespaces. Empty/omitted = all non-excluded namespaces.
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	NamespaceSelector metav1.LabelSelector `json:"namespaceSelector,omitempty"`
+
+	// PodSelector selects pods within those namespaces. Empty/omitted = all pods.
+	// +optional
+	PodSelector metav1.LabelSelector `json:"podSelector,omitempty"`
+
+	// MinSeverity is the lowest severity included in results. Omitted = all severities.
+	// +optional
+	MinSeverity Severity `json:"minSeverity,omitempty"`
+
+	// RegistrySecretRef names a dockerconfigjson Secret in the operator's
+	// namespace, used to pull images from private registries.
+	// +optional
+	RegistrySecretRef *corev1.LocalObjectReference `json:"registrySecretRef,omitempty"`
 }
 
-// ImageScanStatus defines the observed state of ImageScan.
+// ImageScanStatus is written by the operator.
 type ImageScanStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
-	// conditions represent the current state of the ImageScan resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
-	// +listType=map
-	// +listMapKey=type
+	// Phase is the overall state of the ImageScan.
 	// +optional
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	Phase ScanPhase `json:"phase,omitempty"`
+
+	// Message explains an overall failure (e.g. no pods found, secret missing).
+	// +optional
+	Message string `json:"message,omitempty"`
+
+	// Scans has one entry per unique image.
+	// +optional
+	Scans []ImageScanResult `json:"scans,omitempty"`
+}
+
+// ImageScanResult is the state of the scan of one unique image.
+type ImageScanResult struct {
+	// ID identifies this scan; use it with GET /scans/{id}.
+	ID string `json:"id"`
+
+	// Image is the scanned image reference, e.g. nginx:1.25.
+	Image string `json:"image"`
+
+	// Phase of this image's scan.
+	Phase ScanPhase `json:"phase"`
+
+	// Message explains a failure.
+	// +optional
+	Message string `json:"message,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:resource:scope=Cluster
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
-// ImageScan is the Schema for the imagescans API
+// ImageScan requests a Trivy scan of the images used by selected pods.
 type ImageScan struct {
 	metav1.TypeMeta `json:",inline"`
 
@@ -70,18 +96,18 @@ type ImageScan struct {
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitzero"`
 
-	// spec defines the desired state of ImageScan
+	// spec defines which pods' images should be scanned
 	// +required
 	Spec ImageScanSpec `json:"spec"`
 
-	// status defines the observed state of ImageScan
+	// status is written by the operator
 	// +optional
 	Status ImageScanStatus `json:"status,omitzero"`
 }
 
 // +kubebuilder:object:root=true
 
-// ImageScanList contains a list of ImageScan
+// ImageScanList contains a list of ImageScan.
 type ImageScanList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitzero"`
