@@ -1,0 +1,32 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - security.stefanpetrov.dev
+  resources:
+  - imagescans
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - security.stefanpetrov.dev
+  resources:
+  - imagescans/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - security.stefanpetrov.dev
+  resources:
+  - imagescans/status
+  verbs:
+  - get
+  - patch
+  - update
