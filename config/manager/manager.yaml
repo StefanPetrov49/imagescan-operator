@@ -58,52 +58,98 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-      - command:
-        - /manager
-        args:
-          - --leader-elect
-          - --health-probe-bind-address=:8081
-          - --excluded-namespaces=kube-system,local-path-storage
-          - --results-pvc=imagescan-operator-results
-        env:
-          - name: POD_NAMESPACE
-            valueFrom:
-              fieldRef:
-                fieldPath: metadata.namespace
-        image: controller:latest
-        name: manager
-        ports:
-        - containerPort: 8081
-          name: health
-          protocol: TCP
-        securityContext:
-          readOnlyRootFilesystem: true
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-            - "ALL"
-        livenessProbe:
-          httpGet:
-            path: /healthz
-            port: 8081
-          initialDelaySeconds: 15
-          periodSeconds: 20
-        readinessProbe:
-          httpGet:
-            path: /readyz
-            port: 8081
-          initialDelaySeconds: 5
-          periodSeconds: 10
-        # TODO(user): Configure the resources accordingly based on the project requirements.
-        # More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
-        resources:
-          limits:
-            cpu: 500m
-            memory: 128Mi
-          requests:
-            cpu: 10m
-            memory: 64Mi
-        volumeMounts: []
-      volumes: []
+        # Container 1: the operator. Must stay FIRST (kubebuilder's webhook patch targets container 0).
+        - command:
+            - /manager
+          args:
+            - --leader-elect
+            - --health-probe-bind-address=:8081
+            - --excluded-namespaces=kube-system,local-path-storage
+            - --results-pvc=imagescan-operator-results
+            - --summarizer-image=imagescan-operator:dev
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          image: controller:latest
+          name: manager
+          ports:
+            - containerPort: 8081
+              name: health
+              protocol: TCP
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - "ALL"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          # TODO(user): Configure the resources accordingly based on the project requirements.
+          # More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+          resources:
+            limits:
+              cpu: 500m
+              memory: 128Mi
+            requests:
+              cpu: 10m
+              memory: 64Mi
+          volumeMounts: []
+        # Container 2: the HTTP server for scan results. Same image, different program.
+        - name: results-server
+          image: controller:latest
+          command:
+            - /server
+          args:
+            - --results-dir=/data
+            - --addr=:8080
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - "ALL"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 200m
+              memory: 64Mi
+            requests:
+              cpu: 10m
+              memory: 32Mi
+          volumeMounts:
+            - name: results
+              mountPath: /data
+              readOnly: true          # the server can read results, never change them
+      volumes:
+        - name: results
+          persistentVolumeClaim:
+            claimName: imagescan-operator-results
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10

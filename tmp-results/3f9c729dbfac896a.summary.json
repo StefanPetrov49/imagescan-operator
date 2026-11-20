@@ -1,0 +1,17 @@
+{
+  "id": "3f9c729dbfac896a",
+  "imageScan": "imagescan-sample",
+  "image": "alpine:3.20",
+  "digest": "alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc",
+  "scannedAt": "2026-11-19T23:15:32.87105726Z",
+  "os": "alpine 3.20.10",
+  "minSeverity": "MEDIUM",
+  "vulnerabilities": {
+    "CRITICAL": 0,
+    "HIGH": 2,
+    "MEDIUM": 0,
+    "LOW": 0,
+    "UNKNOWN": 0,
+    "total": 2
+  }
+}
