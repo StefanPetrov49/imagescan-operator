@@ -21,6 +21,7 @@ import (
 	"flag"
 	"os"
 
+	"github.com/StefanPetrov49/imagescan-operator/internal/targeting"
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -64,6 +65,18 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
+	var excludedNamespaces string
+	var resultsPVC string
+	var trivyImage string
+	var summarizerImage string
+	flag.StringVar(&summarizerImage, "summarizer-image", "controller:latest",
+		"image containing /summarize (normally the operator's own image)")
+	flag.StringVar(&trivyImage, "trivy-image", "aquasec/trivy:0.69.3",
+		"Trivy image used for scan Jobs; pin by digest in production")
+	flag.StringVar(&resultsPVC, "results-pvc", "imagescan-operator-results",
+		"Name of the PVC (in the operator namespace) where scan results are stored")
+	flag.StringVar(&excludedNamespaces, "excluded-namespaces", "kube-system",
+		"Comma-separated list of namespaces that are never scanned")
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -88,6 +101,12 @@ func main() {
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
+
+	namespace := os.Getenv("POD_NAMESPACE")
+	if namespace == "" {
+		setupLog.Error(nil, "POD_NAMESPACE must be set (via the Downward API)")
+		os.Exit(1)
+	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
@@ -184,8 +203,14 @@ func main() {
 	}
 
 	if err := (&controller.ImageScanReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:          mgr.GetClient(),
+		APIReader:       mgr.GetAPIReader(),
+		Scheme:          mgr.GetScheme(),
+		SummarizerImage: summarizerImage,
+		Excluded:        targeting.ParseExcluded(excludedNamespaces),
+		Namespace:       namespace,
+		ResultsPVC:      resultsPVC,
+		TrivyImage:      trivyImage,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "imagescan")
 		os.Exit(1)

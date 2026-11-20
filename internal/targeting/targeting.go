@@ -4,16 +4,31 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
-	securityv1alpha1 "github.com/StefanPetrov49/imagescan-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	securityv1alpha1 "github.com/StefanPetrov49/imagescan-operator/api/v1alpha1"
 )
 
-// findTargetImages returns the sorted, unique images of all pods matched by spec,
-// skipping excluded namespaces.
-func findTargetImages(ctx context.Context, c client.Client,
+// ParseExcluded turns "kube-system,local-path-storage" into a lookup set.
+func ParseExcluded(csv string) map[string]bool {
+	excluded := map[string]bool{}
+	for _, ns := range strings.Split(csv, ",") {
+		ns = strings.TrimSpace(ns)
+		if ns != "" {
+			excluded[ns] = true
+		}
+	}
+	return excluded
+}
+
+// FindTargetImages returns the sorted, unique images of all pods matched by spec,
+// skipping excluded namespaces. Used by both the controller and the webhook so
+// they always agree on what is targeted.
+func FindTargetImages(ctx context.Context, c client.Client,
 	spec securityv1alpha1.ImageScanSpec, excluded map[string]bool) ([]string, error) {
 
 	nsSel, err := metav1.LabelSelectorAsSelector(&spec.NamespaceSelector)
@@ -28,7 +43,7 @@ func findTargetImages(ctx context.Context, c client.Client,
 	// 1. Namespaces matching the namespace selector
 	var nsList corev1.NamespaceList
 	if err := c.List(ctx, &nsList, client.MatchingLabelsSelector{Selector: nsSel}); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("listing namespaces: %w", err)
 	}
 
 	// 2. Pods in each of them, collecting images into a set
@@ -41,7 +56,7 @@ func findTargetImages(ctx context.Context, c client.Client,
 		if err := c.List(ctx, &pods,
 			client.InNamespace(ns.Name),
 			client.MatchingLabelsSelector{Selector: podSel}); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("listing pods in %s: %w", ns.Name, err)
 		}
 		for _, pod := range pods.Items {
 			for _, ctr := range pod.Spec.Containers {

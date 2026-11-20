@@ -193,6 +193,11 @@ spec:
                   description: ImageScanResult is the state of the scan of one unique
                     image.
                   properties:
+                    completionTime:
+                      description: CompletionTime is when the scan Job finished (succeeded
+                        or failed).
+                      format: date-time
+                      type: string
                     id:
                       description: ID identifies this scan; use it with GET /scans/{id}.
                       type: string
@@ -210,6 +215,10 @@ spec:
                       - Succeeded
                       - PartiallyFailed
                       - Failed
+                      type: string
+                    startTime:
+                      description: StartTime is when the scan Job started.
+                      format: date-time
                       type: string
                   required:
                   - id

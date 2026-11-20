@@ -77,6 +77,14 @@ type ImageScanResult struct {
 	// Phase of this image's scan.
 	Phase ScanPhase `json:"phase"`
 
+	// StartTime is when the scan Job started.
+	// +optional
+	StartTime *metav1.Time `json:"startTime,omitempty"`
+
+	// CompletionTime is when the scan Job finished (succeeded or failed).
+	// +optional
+	CompletionTime *metav1.Time `json:"completionTime,omitempty"`
+
 	// Message explains a failure.
 	// +optional
 	Message string `json:"message,omitempty"`
