@@ -202,6 +202,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	excluded := targeting.ParseExcluded(excludedNamespaces)
+
 	if err := (&controller.ImageScanReconciler{
 		Client:          mgr.GetClient(),
 		APIReader:       mgr.GetAPIReader(),
@@ -217,7 +219,7 @@ func main() {
 	}
 	// nolint:goconst
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
-		if err := webhookv1alpha1.SetupImageScanWebhookWithManager(mgr); err != nil {
+		if err := webhookv1alpha1.SetupImageScanWebhookWithManager(mgr, excluded, namespace); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "ImageScan")
 			os.Exit(1)
 		}

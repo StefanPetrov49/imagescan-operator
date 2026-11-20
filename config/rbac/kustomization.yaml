@@ -25,4 +25,5 @@ resources:
 - imagescan_admin_role.yaml
 - imagescan_editor_role.yaml
 - imagescan_viewer_role.yaml
+- secret_reader_binding.yaml
 

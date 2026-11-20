@@ -1,80 +1,129 @@
-/*
-Copyright 2026.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
 package v1alpha1
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	securityv1alpha1 "github.com/StefanPetrov49/imagescan-operator/api/v1alpha1"
+	"github.com/StefanPetrov49/imagescan-operator/internal/targeting"
 )
 
-// nolint:unused
-// log is for logging in this package.
 var imagescanlog = logf.Log.WithName("imagescan-resource")
 
-// SetupImageScanWebhookWithManager registers the webhook for ImageScan in the manager.
-func SetupImageScanWebhookWithManager(mgr ctrl.Manager) error {
+// SetupImageScanWebhookWithManager registers the validating webhook for ImageScan.
+func SetupImageScanWebhookWithManager(mgr ctrl.Manager, excluded map[string]bool, namespace string) error {
 	return ctrl.NewWebhookManagedBy(mgr, &securityv1alpha1.ImageScan{}).
-		WithValidator(&ImageScanValidator{}).
+		WithValidator(&ImageScanValidator{
+			Client:    mgr.GetClient(),
+			APIReader: mgr.GetAPIReader(),
+			Excluded:  excluded,
+			Namespace: namespace,
+		}).
 		Complete()
 }
 
-// TODO(user): EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
+// Only CREATE: spec updates are already rejected by the CEL rule, and the checks below
+// (pods match, secret exists) describe the moment the scan is requested.
+// +kubebuilder:webhook:path=/validate-security-stefanpetrov-dev-v1alpha1-imagescan,mutating=false,failurePolicy=fail,sideEffects=None,groups=security.stefanpetrov.dev,resources=imagescans,verbs=create,versions=v1alpha1,name=vimagescan-v1alpha1.kb.io,admissionReviewVersions=v1
 
-// TODO(user): change verbs to "verbs=create;update;delete" if you want to enable deletion validation.
-// NOTE: If you want to customise the 'path', use the flags '--defaulting-path' or '--validation-path'.
-// +kubebuilder:webhook:path=/validate-security-stefanpetrov-dev-v1alpha1-imagescan,mutating=false,failurePolicy=fail,sideEffects=None,groups=security.stefanpetrov.dev,resources=imagescans,verbs=create;update,versions=v1alpha1,name=vimagescan-v1alpha1.kb.io,admissionReviewVersions=v1
+// Reading Secrets: only "get", only in the operator's own namespace (generates a Role, not a ClusterRole).
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get,namespace=system
 
-// ImageScanValidator struct is responsible for validating the ImageScan resource
-// when it is created, updated, or deleted.
-//
-// NOTE: The +kubebuilder:object:generate=false marker prevents controller-gen from generating DeepCopy methods,
-// as this struct is used only for temporary operations and does not need to be deeply copied.
+// ImageScanValidator validates ImageScans when they are created.
+// +kubebuilder:object:generate=false
 type ImageScanValidator struct {
-	// TODO(user): Add more fields as needed for validation
+	Client    client.Client   // cached: Pods and Namespaces (the controller watches them anyway)
+	APIReader client.Reader   // uncached: Secrets. A cached read would WATCH all Secrets cluster-wide
+	Excluded  map[string]bool // same exclusion list as the controller
+	Namespace string          // operator namespace, where registry Secrets must live
 }
 
-// ValidateCreate implements admission.Validator so a webhook will be registered for the type ImageScan.
-func (v *ImageScanValidator) ValidateCreate(_ context.Context, obj *securityv1alpha1.ImageScan) (admission.Warnings, error) {
-	imagescanlog.Info("Validation for ImageScan upon creation", "name", obj.GetName())
+// ValidateCreate rejects ImageScans that would scan nothing or reference a missing Secret.
+func (v *ImageScanValidator) ValidateCreate(ctx context.Context, scan *securityv1alpha1.ImageScan) (admission.Warnings, error) {
+	imagescanlog.Info("validating ImageScan", "name", scan.Name)
+	spec := field.NewPath("spec")
+	var errs field.ErrorList
 
-	// TODO(user): fill in your validation logic upon object creation.
+	// 1. Selector syntax (e.g. an unknown operator in matchExpressions).
+	if _, err := metav1.LabelSelectorAsSelector(&scan.Spec.NamespaceSelector); err != nil {
+		errs = append(errs, field.Invalid(spec.Child("namespaceSelector"), scan.Spec.NamespaceSelector, err.Error()))
+	}
+	if _, err := metav1.LabelSelectorAsSelector(&scan.Spec.PodSelector); err != nil {
+		errs = append(errs, field.Invalid(spec.Child("podSelector"), scan.Spec.PodSelector, err.Error()))
+	}
 
+	// 2. Registry Secret must exist in the operator namespace and have the right type.
+	if ref := scan.Spec.RegistrySecretRef; ref != nil {
+		errs = append(errs, v.validateSecret(ctx, spec.Child("registrySecretRef", "name"), ref.Name)...)
+	}
+	if len(errs) > 0 {
+		return nil, invalid(scan, errs)
+	}
+
+	// 3. At least one Pod must be targeted (same function the controller uses).
+	images, err := targeting.FindTargetImages(ctx, v.Client, scan.Spec, v.Excluded)
+	if err != nil {
+		return nil, apierrors.NewInternalError(err)
+	}
+	if len(images) == 0 {
+		return nil, invalid(scan, field.ErrorList{field.Invalid(
+			spec.Child("podSelector"), metav1.FormatLabelSelector(&scan.Spec.PodSelector),
+			"together with namespaceSelector this matches no pods (excluded namespaces are never scanned)",
+		)})
+	}
+
+	// Accepted. Warnings are printed by kubectl: useful feedback for the admin.
+	var warnings admission.Warnings
+	if len(scan.Spec.NamespaceSelector.MatchLabels) == 0 && len(scan.Spec.NamespaceSelector.MatchExpressions) == 0 {
+		warnings = append(warnings, "namespaceSelector is empty: all non-excluded namespaces are targeted")
+	}
+	shown := images
+	if len(shown) > 5 {
+		shown = shown[:5]
+	}
+	warnings = append(warnings, fmt.Sprintf("%d unique image(s) will be scanned: %s", len(images), strings.Join(shown, ", ")))
+	return warnings, nil
+}
+
+func (v *ImageScanValidator) validateSecret(ctx context.Context, path *field.Path, name string) field.ErrorList {
+	if name == "" {
+		return field.ErrorList{field.Required(path, "name of a Secret in namespace "+v.Namespace)}
+	}
+	var s corev1.Secret
+	err := v.APIReader.Get(ctx, types.NamespacedName{Namespace: v.Namespace, Name: name}, &s)
+	switch {
+	case apierrors.IsNotFound(err):
+		return field.ErrorList{field.NotFound(path, v.Namespace+"/"+name)}
+	case err != nil:
+		return field.ErrorList{field.InternalError(path, err)}
+	case s.Type != corev1.SecretTypeDockerConfigJson:
+		return field.ErrorList{field.Invalid(path, name, "Secret must be of type "+string(corev1.SecretTypeDockerConfigJson))}
+	}
+	return nil
+}
+
+// invalid builds the standard Kubernetes "is invalid" error, formatted nicely by kubectl.
+func invalid(scan *securityv1alpha1.ImageScan, errs field.ErrorList) error {
+	return apierrors.NewInvalid(securityv1alpha1.SchemeGroupVersion.WithKind("ImageScan").GroupKind(), scan.Name, errs)
+}
+
+// ValidateUpdate is not registered (verbs=create): spec immutability is enforced by CEL.
+func (v *ImageScanValidator) ValidateUpdate(_ context.Context, _, _ *securityv1alpha1.ImageScan) (admission.Warnings, error) {
 	return nil, nil
 }
 
-// ValidateUpdate implements admission.Validator so a webhook will be registered for the type ImageScan.
-func (v *ImageScanValidator) ValidateUpdate(_ context.Context, oldObj, newObj *securityv1alpha1.ImageScan) (admission.Warnings, error) {
-	imagescanlog.Info("Validation for ImageScan upon update", "name", newObj.GetName())
-
-	// TODO(user): fill in your validation logic upon object update.
-
-	return nil, nil
-}
-
-// ValidateDelete implements admission.Validator so a webhook will be registered for the type ImageScan.
-func (v *ImageScanValidator) ValidateDelete(_ context.Context, obj *securityv1alpha1.ImageScan) (admission.Warnings, error) {
-	imagescanlog.Info("Validation for ImageScan upon deletion", "name", obj.GetName())
-
-	// TODO(user): fill in your validation logic upon object deletion.
-
+// ValidateDelete is not registered: deleting a scan needs no checks.
+func (v *ImageScanValidator) ValidateDelete(_ context.Context, _ *securityv1alpha1.ImageScan) (admission.Warnings, error) {
 	return nil, nil
 }
