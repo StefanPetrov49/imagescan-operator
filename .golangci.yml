@@ -52,6 +52,11 @@ linters:
           - dupl
           - lll
         path: internal/*
+      # Tests repeat literal fixtures (IDs, labels, images) on purpose: each case
+      # stays readable on its own. goconst is meant for production code.
+      - linters:
+          - goconst
+        path: _test\.go
     paths:
       - third_party$
       - builtin$

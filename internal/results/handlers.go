@@ -69,7 +69,7 @@ func NewHandler(store *Store, log *slog.Logger) http.Handler {
 			log.Error("opening report", "err", err)
 			writeError(w, http.StatusInternalServerError, "cannot read scan result")
 		default:
-			defer f.Close()
+			defer func() { _ = f.Close() }() // read-only: a failed Close loses nothing
 			w.Header().Set("Content-Type", "application/json")
 			if _, err := io.Copy(w, f); err != nil {
 				log.Warn("streaming report", "err", err) // usually: client disconnected

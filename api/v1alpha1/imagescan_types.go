@@ -61,8 +61,10 @@ type ImageScanStatus struct {
 	// +optional
 	Message string `json:"message,omitempty"`
 
-	// Scans has one entry per unique image.
+	// Scans has one entry per unique image, keyed by scan ID.
 	// +optional
+	// +listType=map
+	// +listMapKey=id
 	Scans []ImageScanResult `json:"scans,omitempty"`
 }
 

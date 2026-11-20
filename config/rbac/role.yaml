@@ -14,33 +14,13 @@ rules:
   - list
   - watch
 - apiGroups:
-  - batch
-  resources:
-  - jobs
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - watch
-- apiGroups:
   - security.stefanpetrov.dev
   resources:
   - imagescans
   verbs:
-  - create
-  - delete
   - get
   - list
-  - patch
-  - update
   - watch
-- apiGroups:
-  - security.stefanpetrov.dev
-  resources:
-  - imagescans/finalizers
-  verbs:
-  - update
 - apiGroups:
   - security.stefanpetrov.dev
   resources:
@@ -62,3 +42,13 @@ rules:
   - secrets
   verbs:
   - get
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch

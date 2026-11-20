@@ -3,7 +3,7 @@ package targeting
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -16,7 +16,7 @@ import (
 // ParseExcluded turns "kube-system,local-path-storage" into a lookup set.
 func ParseExcluded(csv string) map[string]bool {
 	excluded := map[string]bool{}
-	for _, ns := range strings.Split(csv, ",") {
+	for ns := range strings.SplitSeq(csv, ",") {
 		ns = strings.TrimSpace(ns)
 		if ns != "" {
 			excluded[ns] = true
@@ -27,8 +27,8 @@ func ParseExcluded(csv string) map[string]bool {
 
 // FindTargetImages returns the sorted, unique images of all pods matched by spec,
 // skipping excluded namespaces. Used by both the controller and the webhook so
-// they always agree on what is targeted.
-func FindTargetImages(ctx context.Context, c client.Client,
+// they always agree on what is targeted. It only reads, so it takes a client.Reader.
+func FindTargetImages(ctx context.Context, c client.Reader,
 	spec securityv1alpha1.ImageScanSpec, excluded map[string]bool) ([]string, error) {
 
 	nsSel, err := metav1.LabelSelectorAsSelector(&spec.NamespaceSelector)
@@ -40,14 +40,21 @@ func FindTargetImages(ctx context.Context, c client.Client,
 		return nil, fmt.Errorf("invalid podSelector: %w", err)
 	}
 
-	// 1. Namespaces matching the namespace selector
+	// 1. Namespaces matching the namespace selector (their labels live on the Namespace).
 	var nsList corev1.NamespaceList
 	if err := c.List(ctx, &nsList, client.MatchingLabelsSelector{Selector: nsSel}); err != nil {
 		return nil, fmt.Errorf("listing namespaces: %w", err)
 	}
 
-	// 2. Pods in each of them, collecting images into a set
+	// 2. Pods in each of them, collecting images into a set.
 	seen := map[string]struct{}{}
+	add := func(containers []corev1.Container) {
+		for _, ctr := range containers {
+			if plausibleImage(ctr.Image) {
+				seen[ctr.Image] = struct{}{}
+			}
+		}
+	}
 	for _, ns := range nsList.Items {
 		if excluded[ns.Name] {
 			continue
@@ -59,20 +66,23 @@ func FindTargetImages(ctx context.Context, c client.Client,
 			return nil, fmt.Errorf("listing pods in %s: %w", ns.Name, err)
 		}
 		for _, pod := range pods.Items {
-			for _, ctr := range pod.Spec.Containers {
-				seen[ctr.Image] = struct{}{}
-			}
-			for _, ctr := range pod.Spec.InitContainers {
-				seen[ctr.Image] = struct{}{}
-			}
+			add(pod.Spec.InitContainers) // init containers and native sidecars run too
+			add(pod.Spec.Containers)
 		}
 	}
 
-	// 3. Map → sorted slice
+	// 3. Set -> sorted slice (Go randomizes map order; a stable order keeps the status stable).
 	images := make([]string, 0, len(seen))
 	for img := range seen {
 		images = append(images, img)
 	}
-	sort.Strings(images)
+	slices.Sort(images)
 	return images, nil
+}
+
+// plausibleImage filters out strings that can't be an image reference. Kubernetes doesn't
+// validate the format of a Pod's image, and the value becomes a command-line argument of
+// Trivy, so something like "--input=/etc/passwd" must never get through.
+func plausibleImage(img string) bool {
+	return img != "" && !strings.HasPrefix(img, "-") && !strings.ContainsAny(img, " \t\r\n")
 }

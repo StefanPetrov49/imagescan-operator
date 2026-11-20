@@ -188,7 +188,7 @@ spec:
                 - Failed
                 type: string
               scans:
-                description: Scans has one entry per unique image.
+                description: Scans has one entry per unique image, keyed by scan ID.
                 items:
                   description: ImageScanResult is the state of the scan of one unique
                     image.
@@ -226,6 +226,9 @@ spec:
                   - phase
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - id
+                x-kubernetes-list-type: map
             type: object
         required:
         - spec

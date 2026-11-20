@@ -15,7 +15,10 @@ var idPattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
 // ValidID reports whether id has the exact shape of a scan ID (16 lowercase hex chars).
 func ValidID(id string) bool { return idPattern.MatchString(id) }
 
-func ReportFile(id string) string  { return id + ".json" }
+// ReportFile is the file name of the full Trivy report of a scan.
+func ReportFile(id string) string { return id + ".json" }
+
+// SummaryFile is the file name of a scan's summary. It only exists for completed scans.
 func SummaryFile(id string) string { return id + ".summary.json" }
 
 // Summary is the small per-scan record served by GET /scans.
@@ -30,6 +33,8 @@ type Summary struct {
 	Vulnerabilities Counts    `json:"vulnerabilities"`
 }
 
+// Counts are vulnerability counts by Trivy severity. The keys match Trivy's severity names;
+// changing them would break summaries already stored on the volume.
 type Counts struct {
 	Critical int `json:"CRITICAL"`
 	High     int `json:"HIGH"`

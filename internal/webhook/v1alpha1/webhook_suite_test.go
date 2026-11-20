@@ -109,7 +109,7 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).NotTo(HaveOccurred())
 
-	err = SetupImageScanWebhookWithManager(mgr)
+	err = SetupImageScanWebhookWithManager(mgr, map[string]bool{}, "default")
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:webhook

@@ -4,8 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"log/slog"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -20,16 +21,19 @@ var (
 // so no file outside that directory can ever be opened, even by mistake.
 type Store struct {
 	root *os.Root
+	log  *slog.Logger
 }
 
-func NewStore(dir string) (*Store, error) {
+// NewStore opens dir for reading. log reports summaries that can't be read.
+func NewStore(dir string, log *slog.Logger) (*Store, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, err
 	}
-	return &Store{root: root}, nil
+	return &Store{root: root, log: log}, nil
 }
 
+// Close releases the directory handle.
 func (s *Store) Close() error { return s.root.Close() }
 
 // List returns summaries of completed scans whose image starts with prefix, newest first.
@@ -46,21 +50,25 @@ func (s *Store) List(prefix string) ([]Summary, error) {
 		}
 		data, err := fs.ReadFile(s.root.FS(), e.Name())
 		if err != nil {
-			continue // removed meanwhile
+			if !errors.Is(err, fs.ErrNotExist) { // not exist = removed meanwhile: fine
+				s.log.Warn("Skipping unreadable summary", "file", e.Name(), "err", err)
+			}
+			continue
 		}
 		var sum Summary
 		if err := json.Unmarshal(data, &sum); err != nil {
+			s.log.Warn("Skipping corrupt summary", "file", e.Name(), "err", err)
 			continue
 		}
 		if strings.HasPrefix(sum.Image, prefix) {
 			out = append(out, sum)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if !out[i].ScannedAt.Equal(out[j].ScannedAt) {
-			return out[i].ScannedAt.After(out[j].ScannedAt)
+	slices.SortFunc(out, func(a, b Summary) int {
+		if c := b.ScannedAt.Compare(a.ScannedAt); c != 0 {
+			return c // newest first
 		}
-		return out[i].ID < out[j].ID // stable order for equal timestamps
+		return strings.Compare(a.ID, b.ID) // stable order for equal timestamps
 	})
 	return out, nil
 }

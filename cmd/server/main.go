@@ -1,3 +1,4 @@
+// Command server serves scan results from the results volume over HTTP (read-only).
 package main
 
 import (
@@ -15,18 +16,23 @@ import (
 )
 
 func main() {
+	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	if err := run(log); err != nil {
+		log.Error("Server failed", "err", err)
+		os.Exit(1)
+	}
+}
+
+func run(log *slog.Logger) error {
 	dir := flag.String("results-dir", "/data", "directory with scan reports and summaries")
 	addr := flag.String("addr", ":8080", "listen address")
 	flag.Parse()
 
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-
-	store, err := results.NewStore(*dir)
+	store, err := results.NewStore(*dir, log)
 	if err != nil {
-		log.Error("opening results dir", "dir", *dir, "err", err)
-		os.Exit(1)
+		return err
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }() // read-only: a failed Close loses nothing
 
 	srv := &http.Server{
 		Addr:              *addr,
@@ -38,18 +44,25 @@ func main() {
 	}
 
 	// Graceful shutdown: Kubernetes sends SIGTERM before killing the container.
+	// ListenAndServe returns as soon as Shutdown starts, so wait until Shutdown is done,
+	// otherwise requests that are still running would be cut off.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
+	shutdownDone := make(chan struct{})
 	go func() {
+		defer close(shutdownDone)
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Warn("Graceful shutdown incomplete", "err", err)
+		}
 	}()
 
-	log.Info("serving scan results", "addr", *addr, "dir", *dir)
+	log.Info("Serving scan results", "addr", *addr, "dir", *dir)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Error("server failed", "err", err)
-		os.Exit(1)
+		return err
 	}
+	<-shutdownDone
+	return nil
 }

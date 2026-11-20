@@ -183,6 +183,16 @@ replacements:
          delimiter: '/'
          index: 1
          create: true
+ - source:
+     kind: Deployment
+     name: controller-manager
+     fieldPath: .spec.template.spec.containers.[name=manager].image
+   targets:
+     - select:
+         kind: Deployment
+         name: controller-manager
+       fieldPaths:
+         - .spec.template.spec.containers.[name=manager].env.[name=SUMMARIZER_IMAGE].value
 
 # - source: # Uncomment the following block if you have a DefaultingWebhook (--defaulting )
 #     kind: Certificate

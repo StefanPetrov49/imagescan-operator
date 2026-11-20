@@ -19,8 +19,6 @@ import (
 	"github.com/StefanPetrov49/imagescan-operator/internal/targeting"
 )
 
-var imagescanlog = logf.Log.WithName("imagescan-resource")
-
 // SetupImageScanWebhookWithManager registers the validating webhook for ImageScan.
 func SetupImageScanWebhookWithManager(mgr ctrl.Manager, excluded map[string]bool, namespace string) error {
 	return ctrl.NewWebhookManagedBy(mgr, &securityv1alpha1.ImageScan{}).
@@ -43,15 +41,20 @@ func SetupImageScanWebhookWithManager(mgr ctrl.Manager, excluded map[string]bool
 // ImageScanValidator validates ImageScans when they are created.
 // +kubebuilder:object:generate=false
 type ImageScanValidator struct {
-	Client    client.Client   // cached: Pods and Namespaces (the controller watches them anyway)
-	APIReader client.Reader   // uncached: Secrets. A cached read would WATCH all Secrets cluster-wide
-	Excluded  map[string]bool // same exclusion list as the controller
-	Namespace string          // operator namespace, where registry Secrets must live
+	// Client reads Pods and Namespaces from the cache (the controller watches them anyway).
+	Client client.Reader
+	// APIReader reads Secrets directly. A cached read would WATCH all Secrets cluster-wide.
+	APIReader client.Reader
+	// Excluded is the same exclusion list the controller uses.
+	Excluded map[string]bool
+	// Namespace is the operator namespace, where registry Secrets must live.
+	Namespace string
 }
 
 // ValidateCreate rejects ImageScans that would scan nothing or reference a missing Secret.
-func (v *ImageScanValidator) ValidateCreate(ctx context.Context, scan *securityv1alpha1.ImageScan) (admission.Warnings, error) {
-	imagescanlog.Info("validating ImageScan", "name", scan.Name)
+func (v *ImageScanValidator) ValidateCreate(
+	ctx context.Context, scan *securityv1alpha1.ImageScan) (admission.Warnings, error) {
+	logf.FromContext(ctx).Info("Validating ImageScan", "name", scan.Name)
 	spec := field.NewPath("spec")
 	var errs field.ErrorList
 
@@ -92,7 +95,8 @@ func (v *ImageScanValidator) ValidateCreate(ctx context.Context, scan *securityv
 	if len(shown) > 5 {
 		shown = shown[:5]
 	}
-	warnings = append(warnings, fmt.Sprintf("%d unique image(s) will be scanned: %s", len(images), strings.Join(shown, ", ")))
+	warnings = append(warnings,
+		fmt.Sprintf("%d unique image(s) will be scanned: %s", len(images), strings.Join(shown, ", ")))
 	return warnings, nil
 }
 
@@ -115,15 +119,18 @@ func (v *ImageScanValidator) validateSecret(ctx context.Context, path *field.Pat
 
 // invalid builds the standard Kubernetes "is invalid" error, formatted nicely by kubectl.
 func invalid(scan *securityv1alpha1.ImageScan, errs field.ErrorList) error {
-	return apierrors.NewInvalid(securityv1alpha1.SchemeGroupVersion.WithKind("ImageScan").GroupKind(), scan.Name, errs)
+	gk := securityv1alpha1.SchemeGroupVersion.WithKind("ImageScan").GroupKind()
+	return apierrors.NewInvalid(gk, scan.Name, errs)
 }
 
 // ValidateUpdate is not registered (verbs=create): spec immutability is enforced by CEL.
-func (v *ImageScanValidator) ValidateUpdate(_ context.Context, _, _ *securityv1alpha1.ImageScan) (admission.Warnings, error) {
+func (v *ImageScanValidator) ValidateUpdate(
+	_ context.Context, _, _ *securityv1alpha1.ImageScan) (admission.Warnings, error) {
 	return nil, nil
 }
 
 // ValidateDelete is not registered: deleting a scan needs no checks.
-func (v *ImageScanValidator) ValidateDelete(_ context.Context, _ *securityv1alpha1.ImageScan) (admission.Warnings, error) {
+func (v *ImageScanValidator) ValidateDelete(
+	_ context.Context, _ *securityv1alpha1.ImageScan) (admission.Warnings, error) {
 	return nil, nil
 }

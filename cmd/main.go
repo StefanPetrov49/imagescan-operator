@@ -21,10 +21,13 @@ import (
 	"flag"
 	"os"
 
-	"github.com/StefanPetrov49/imagescan-operator/internal/targeting"
+	batchv1 "k8s.io/api/batch/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -38,6 +41,7 @@ import (
 
 	securityv1alpha1 "github.com/StefanPetrov49/imagescan-operator/api/v1alpha1"
 	"github.com/StefanPetrov49/imagescan-operator/internal/controller"
+	"github.com/StefanPetrov49/imagescan-operator/internal/targeting"
 	webhookv1alpha1 "github.com/StefanPetrov49/imagescan-operator/internal/webhook/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
@@ -69,8 +73,9 @@ func main() {
 	var resultsPVC string
 	var trivyImage string
 	var summarizerImage string
-	flag.StringVar(&summarizerImage, "summarizer-image", "controller:latest",
-		"image containing /summarize (normally the operator's own image)")
+	flag.StringVar(&summarizerImage, "summarizer-image", os.Getenv("SUMMARIZER_IMAGE"),
+		"Image containing /summarize, normally the operator's own image "+
+			"(default: $SUMMARIZER_IMAGE, which kustomize sets to the manager image)")
 	flag.StringVar(&trivyImage, "trivy-image", "aquasec/trivy:0.69.3",
 		"Trivy image used for scan Jobs; pin by digest in production")
 	flag.StringVar(&resultsPVC, "results-pvc", "imagescan-operator-results",
@@ -102,13 +107,18 @@ func main() {
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
+	// Set the logger first: controller-runtime drops log lines written before this.
+	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
 	namespace := os.Getenv("POD_NAMESPACE")
 	if namespace == "" {
 		setupLog.Error(nil, "POD_NAMESPACE must be set (via the Downward API)")
 		os.Exit(1)
 	}
-
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	if summarizerImage == "" {
+		setupLog.Error(nil, "Summarizer image must be set (--summarizer-image or SUMMARIZER_IMAGE)")
+		os.Exit(1)
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -185,6 +195,11 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "3ac198d4.stefanpetrov.dev",
+		// Scan Jobs only exist in our own namespace, and RBAC only allows Jobs there (a Role),
+		// so only watch Jobs in that namespace. A cluster-wide watch would be forbidden.
+		Cache: cache.Options{ByObject: map[client.Object]cache.ByObject{
+			&batchv1.Job{}: {Namespaces: map[string]cache.Config{namespace: {}}},
+		}},
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -209,7 +224,7 @@ func main() {
 		APIReader:       mgr.GetAPIReader(),
 		Scheme:          mgr.GetScheme(),
 		SummarizerImage: summarizerImage,
-		Excluded:        targeting.ParseExcluded(excludedNamespaces),
+		Excluded:        excluded, // the same list as the webhook, so both agree
 		Namespace:       namespace,
 		ResultsPVC:      resultsPVC,
 		TrivyImage:      trivyImage,
