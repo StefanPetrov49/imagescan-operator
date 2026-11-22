@@ -1,0 +1,10 @@
+# Created by hack/demo-setup.sh. Scans every demo image once, so Trivy's databases
+# and the image layers are cached on the volume and the live demo takes seconds.
+apiVersion: security.stefanpetrov.dev/v1alpha1
+kind: ImageScan
+metadata:
+  name: warmup
+spec:
+  podSelector:
+    matchLabels:
+      app: web

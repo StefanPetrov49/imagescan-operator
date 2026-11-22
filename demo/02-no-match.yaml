@@ -1,0 +1,9 @@
+# Rejected by the validating webhook: no Pod has this label.
+apiVersion: security.stefanpetrov.dev/v1alpha1
+kind: ImageScan
+metadata:
+  name: no-match
+spec:
+  podSelector:
+    matchLabels:
+      app: does-not-exist

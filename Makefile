@@ -261,3 +261,20 @@ endef
 define gomodver
 $(shell go list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' $(1) 2>/dev/null)
 endef
+
+##@ Demo
+
+DEMO_CLUSTER ?= imagescan
+DEMO_IMG ?= imagescan-operator:dev
+
+.PHONY: demo-setup
+demo-setup: ## Create (or start) a kind cluster with cert-manager, the operator and demo Pods, then warm the Trivy cache.
+	CLUSTER=$(DEMO_CLUSTER) IMG=$(DEMO_IMG) bash hack/demo-setup.sh
+
+.PHONY: demo
+demo: ## Guided demo: press Enter to run each step (run demo-setup first).
+	bash hack/demo.sh
+
+.PHONY: demo-clean
+demo-clean: ## Delete the demo kind cluster.
+	$(KIND) delete cluster --name $(DEMO_CLUSTER)

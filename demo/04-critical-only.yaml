@@ -1,0 +1,13 @@
+# Bonus (Trivy --severity): the same targets as 01, but only CRITICAL findings are kept.
+apiVersion: security.stefanpetrov.dev/v1alpha1
+kind: ImageScan
+metadata:
+  name: production-web-critical
+spec:
+  namespaceSelector:
+    matchLabels:
+      env: production
+  podSelector:
+    matchLabels:
+      app: web
+  minSeverity: CRITICAL

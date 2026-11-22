@@ -1,0 +1,10 @@
+# Rejected by the CRD schema (enum), before the request reaches the webhook.
+apiVersion: security.stefanpetrov.dev/v1alpha1
+kind: ImageScan
+metadata:
+  name: bad-severity
+spec:
+  podSelector:
+    matchLabels:
+      app: web
+  minSeverity: SEVERE

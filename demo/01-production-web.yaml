@@ -1,0 +1,12 @@
+# The task's example: all Pods with app=web in namespaces labelled env=production.
+apiVersion: security.stefanpetrov.dev/v1alpha1
+kind: ImageScan
+metadata:
+  name: production-web
+spec:
+  namespaceSelector:
+    matchLabels:
+      env: production
+  podSelector:
+    matchLabels:
+      app: web
